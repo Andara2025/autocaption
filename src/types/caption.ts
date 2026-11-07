@@ -17,6 +17,21 @@ export interface CaptionSegment {
   words: WordCaption[];
 }
 
+export type AspectRatioMode = '9:16' | '16:9';
+
+export type VideoFitMode = 'cover' | 'contain';
+
+export type TimelineTool = 'select' | 'razor';
+
+export interface TrackVisibilityState {
+  captionsVisible: boolean;
+  captionsLocked: boolean;
+  videoVisible: boolean;
+  videoLocked: boolean;
+  audioMuted: boolean;
+  audioLocked: boolean;
+}
+
 export type PresetTheme = 
   | 'hormozi'
   | 'mrbeast'
@@ -71,6 +86,7 @@ export interface CaptionStyle {
   activeScale: number;       // e.g. 1.2
   showEmojis: boolean;
   showSafeZones: boolean;
+  showGridGuides?: boolean;
 }
 
 export interface VideoMetadata {

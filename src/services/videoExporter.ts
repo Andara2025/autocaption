@@ -1,4 +1,4 @@
-import { CaptionStyle, WordCaption } from '../types/caption';
+import { AspectRatioMode, CaptionStyle, VideoFitMode, WordCaption } from '../types/caption';
 
 export interface ExportProgressCallback {
   (progress: number, statusText: string): void;
@@ -7,26 +7,28 @@ export interface ExportProgressCallback {
 /**
  * Export the video with captions rendered directly on canvas 100% client-side
  * using HTML5 Canvas + MediaRecorder and Web Audio API.
+ * Supports both 9:16 (720x1280) and 16:9 (1280x720) aspect ratios.
  */
 export async function exportVideoClientSide(
   videoSourceUrl: string,
   words: WordCaption[],
   style: CaptionStyle,
   duration: number,
-  onProgress: ExportProgressCallback
+  onProgress: ExportProgressCallback,
+  aspectRatio: AspectRatioMode = '9:16',
+  videoFit: VideoFitMode = 'cover'
 ): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    onProgress(5, 'Initializing video decoding & canvas pipeline...');
+    onProgress(5, `Initializing ${aspectRatio} video decoding & canvas pipeline...`);
 
     const video = document.createElement('video');
     video.crossOrigin = 'anonymous';
     video.src = videoSourceUrl;
-    video.muted = false; // ensure audio is available for decoding
+    video.muted = false;
     video.playsInline = true;
 
-    // 9:16 vertical resolution
-    const canvasWidth = 720;
-    const canvasHeight = 1280;
+    const canvasWidth = aspectRatio === '16:9' ? 1280 : 720;
+    const canvasHeight = aspectRatio === '16:9' ? 720 : 1280;
 
     const canvas = document.createElement('canvas');
     canvas.width = canvasWidth;
@@ -42,7 +44,6 @@ export async function exportVideoClientSide(
       try {
         onProgress(15, 'Setting up real-time audio sync & capture...');
 
-        // Set up Web Audio to capture video soundtrack
         let audioContext: AudioContext | null = null;
         let mediaStreamDest: MediaStreamAudioDestinationNode | null = null;
         let sourceNode: MediaElementAudioSourceNode | null = null;
@@ -52,7 +53,6 @@ export async function exportVideoClientSide(
           sourceNode = audioContext.createMediaElementSource(video);
           mediaStreamDest = audioContext.createMediaStreamDestination();
           sourceNode.connect(mediaStreamDest);
-          // Also connect to context destination if we want audio or keep isolated
         } catch (audioErr) {
           console.warn('Audio capture warning, rendering video track only:', audioErr);
         }
@@ -66,7 +66,6 @@ export async function exportVideoClientSide(
 
         const combinedStream = new MediaStream(tracks);
 
-        // Detect supported mime type
         let mimeType = 'video/webm;codecs=vp9,opus';
         if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,mp4a.40.2')) {
           mimeType = 'video/mp4;codecs=avc1,mp4a.40.2';
@@ -80,7 +79,7 @@ export async function exportVideoClientSide(
 
         const recorder = new MediaRecorder(combinedStream, {
           mimeType,
-          videoBitsPerSecond: 6000000, // 6 Mbps high quality
+          videoBitsPerSecond: 6000000,
         });
 
         const recordedChunks: Blob[] = [];
@@ -99,7 +98,6 @@ export async function exportVideoClientSide(
           resolve(finalBlob);
         };
 
-        // Chunk words for pagination
         const chunkSize = style.wordsPerChunk > 0 ? style.wordsPerChunk : 3;
         const segments: Array<{ start: number; end: number; words: WordCaption[] }> = [];
         for (let i = 0; i < words.length; i += chunkSize) {
@@ -117,7 +115,6 @@ export async function exportVideoClientSide(
 
         const totalDuration = Math.min(duration || 15, video.duration || 15);
 
-        // Render loop
         const drawFrame = () => {
           if (video.paused || video.ended || video.currentTime >= totalDuration) {
             if (recorder.state === 'recording') {
@@ -129,14 +126,13 @@ export async function exportVideoClientSide(
 
           const curTime = video.currentTime;
           const pct = Math.min(99, Math.round((curTime / totalDuration) * 85) + 15);
-          onProgress(pct, `Rendering frame at ${curTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s...`);
+          onProgress(pct, `Rendering ${aspectRatio} frame at ${curTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s...`);
 
-          // 1. Draw video background centered & cropped to 9:16
-          ctx.fillStyle = '#000000';
+          ctx.fillStyle = '#05070B';
           ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-          const vW = video.videoWidth || 1080;
-          const vH = video.videoHeight || 1920;
+          const vW = video.videoWidth || canvasWidth;
+          const vH = video.videoHeight || canvasHeight;
           const videoAspect = vW / vH;
           const canvasAspect = canvasWidth / canvasHeight;
 
@@ -145,21 +141,30 @@ export async function exportVideoClientSide(
           let offsetX = 0;
           let offsetY = 0;
 
-          if (videoAspect > canvasAspect) {
-            // Video is wider than canvas: crop sides
-            renderH = canvasHeight;
-            renderW = renderH * videoAspect;
-            offsetX = (canvasWidth - renderW) / 2;
+          if (videoFit === 'contain') {
+            if (videoAspect > canvasAspect) {
+              renderW = canvasWidth;
+              renderH = renderW / videoAspect;
+              offsetY = (canvasHeight - renderH) / 2;
+            } else {
+              renderH = canvasHeight;
+              renderW = renderH * videoAspect;
+              offsetX = (canvasWidth - renderW) / 2;
+            }
           } else {
-            // Video is taller than canvas
-            renderW = canvasWidth;
-            renderH = renderW / videoAspect;
-            offsetY = (canvasHeight - renderH) / 2;
+            if (videoAspect > canvasAspect) {
+              renderH = canvasHeight;
+              renderW = renderH * videoAspect;
+              offsetX = (canvasWidth - renderW) / 2;
+            } else {
+              renderW = canvasWidth;
+              renderH = renderW / videoAspect;
+              offsetY = (canvasHeight - renderH) / 2;
+            }
           }
 
           ctx.drawImage(video, offsetX, offsetY, renderW, renderH);
 
-          // 2. Find active caption segment
           const activeSegment = segments.find(
             (seg) => curTime >= seg.start && curTime <= seg.end
           );
@@ -183,9 +188,6 @@ export async function exportVideoClientSide(
   });
 }
 
-/**
- * Draws words with fonts, strokes, scales, and active highlights onto the 2D canvas
- */
 function drawCaptionsOnCanvas(
   ctx: CanvasRenderingContext2D,
   words: WordCaption[],
@@ -197,12 +199,11 @@ function drawCaptionsOnCanvas(
   const posY = (style.positionY / 100) * canvasHeight;
   const posX = (style.positionX / 100) * canvasWidth;
 
-  const baseFontSize = (style.fontSize / 52) * 58; // scale to 720p
+  const baseFontSize = (style.fontSize / 52) * 56;
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // Measure all words to compute total width
   ctx.font = `${style.fontWeight} ${baseFontSize}px "${style.fontFamily}", sans-serif`;
 
   const wordMetrics = words.map((w) => {
@@ -251,7 +252,6 @@ function drawCaptionsOnCanvas(
     ctx.translate(wordCenterX, wordCenterY);
     ctx.scale(scale, scale);
 
-    // Background box if active
     if (bgColor !== 'transparent') {
       ctx.fillStyle = bgColor;
       const padX = 14;
@@ -267,7 +267,6 @@ function drawCaptionsOnCanvas(
       ctx.fill();
     }
 
-    // Shadow
     if (style.hasShadow) {
       ctx.shadowColor = style.shadowColor;
       ctx.shadowBlur = 12;
@@ -275,7 +274,6 @@ function drawCaptionsOnCanvas(
       ctx.shadowOffsetY = 4;
     }
 
-    // Stroke
     if (style.strokeWidth > 0) {
       ctx.lineWidth = style.strokeWidth * 2;
       ctx.strokeStyle = style.strokeColor;
@@ -283,7 +281,6 @@ function drawCaptionsOnCanvas(
       ctx.strokeText(item.text, 0, 0);
     }
 
-    // Text Fill
     ctx.fillStyle = textColor;
     ctx.fillText(item.text, 0, 0);
 

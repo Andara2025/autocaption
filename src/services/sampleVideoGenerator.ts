@@ -1,6 +1,8 @@
+import { AspectRatioMode } from '../types/caption';
+
 /**
- * Generates local 9:16 vertical video backgrounds in-browser
- * using Canvas + MediaRecorder so demo clips NEVER fail due to external CDN CORS or 404 errors.
+ * Generates local 9:16 vertical or 16:9 widescreen video backgrounds in-browser
+ * using Canvas + MediaRecorder so demo clips never fail due to external CDN CORS or 404 errors.
  */
 
 const videoCache = new Map<string, string>();
@@ -8,15 +10,16 @@ const videoCache = new Map<string, string>();
 export async function getReliableSampleVideoUrl(
   sampleId: string,
   duration = 15,
-  themeColor = '#3B82F6'
+  themeColor = '#3B82F6',
+  aspectRatio: AspectRatioMode = '9:16'
 ): Promise<string> {
-  if (videoCache.has(sampleId)) {
-    return videoCache.get(sampleId)!;
+  const cacheKey = `${sampleId}_${aspectRatio}`;
+  if (videoCache.has(cacheKey)) {
+    return videoCache.get(cacheKey)!;
   }
 
-  // Create an offscreen canvas to render a stylish 9:16 vertical background
-  const width = 540;
-  const height = 960;
+  const width = aspectRatio === '16:9' ? 960 : 540;
+  const height = aspectRatio === '16:9' ? 540 : 960;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -38,7 +41,7 @@ export async function getReliableSampleVideoUrl(
 
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 2500000,
+        videoBitsPerSecond: 2800000,
       });
 
       const chunks: Blob[] = [];
@@ -49,24 +52,24 @@ export async function getReliableSampleVideoUrl(
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: mimeType });
         const blobUrl = URL.createObjectURL(blob);
-        videoCache.set(sampleId, blobUrl);
+        videoCache.set(cacheKey, blobUrl);
         resolve(blobUrl);
       };
 
       recorder.start();
 
-      const startTime = performance.now();
-      const totalFrames = Math.min(300, Math.round(duration * 30)); // max 10s loop
+      const totalFrames = Math.min(240, Math.round(duration * 30)); // fast 8s seamless loop
       let frame = 0;
 
-      const particles: Array<{ x: number; y: number; r: number; speed: number; opacity: number }> = [];
-      for (let p = 0; p < 24; p++) {
+      const particles: Array<{ x: number; y: number; r: number; speed: number; opacity: number; drift: number }> = [];
+      for (let p = 0; p < 28; p++) {
         particles.push({
           x: Math.random() * width,
           y: Math.random() * height,
-          r: 3 + Math.random() * 8,
-          speed: 0.5 + Math.random() * 1.5,
-          opacity: 0.2 + Math.random() * 0.5,
+          r: 2 + Math.random() * 6,
+          speed: 0.6 + Math.random() * 1.4,
+          opacity: 0.15 + Math.random() * 0.45,
+          drift: (Math.random() - 0.5) * 0.6,
         });
       }
 
@@ -79,29 +82,38 @@ export async function getReliableSampleVideoUrl(
         const t = frame / 30;
 
         // 1. Deep cinematic background gradient
-        const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
-        bgGrad.addColorStop(0, '#090D16');
-        bgGrad.addColorStop(0.5, '#0F172A');
-        bgGrad.addColorStop(1, '#050811');
+        const bgGrad = ctx.createLinearGradient(0, 0, width, height);
+        bgGrad.addColorStop(0, '#070A12');
+        bgGrad.addColorStop(0.5, '#0D1322');
+        bgGrad.addColorStop(1, '#05070E');
         ctx.fillStyle = bgGrad;
         ctx.fillRect(0, 0, width, height);
 
-        // 2. Dynamic ambient glow orb
-        const glowX = width / 2 + Math.sin(t * 0.8) * 60;
-        const glowY = height * 0.42 + Math.cos(t * 0.6) * 70;
-        const glowRadius = 240 + Math.sin(t * 1.5) * 40;
+        // 2. Dynamic ambient light waves
+        const glowX = width * 0.5 + Math.sin(t * 0.9) * (width * 0.18);
+        const glowY = height * 0.45 + Math.cos(t * 0.7) * (height * 0.12);
+        const glowRadius = Math.max(width, height) * 0.42 + Math.sin(t * 1.5) * 35;
 
         const orbGrad = ctx.createRadialGradient(glowX, glowY, 10, glowX, glowY, glowRadius);
-        orbGrad.addColorStop(0, themeColor + '55'); // transparent glow
-        orbGrad.addColorStop(0.6, themeColor + '15');
+        orbGrad.addColorStop(0, themeColor + '48');
+        orbGrad.addColorStop(0.55, themeColor + '16');
         orbGrad.addColorStop(1, 'transparent');
         ctx.fillStyle = orbGrad;
         ctx.fillRect(0, 0, width, height);
 
-        // 3. Subtle grid lines
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+        // Secondary subtle counter-glow
+        const glow2X = width * 0.3 + Math.cos(t * 0.6) * (width * 0.15);
+        const glow2Y = height * 0.65 + Math.sin(t * 0.8) * (height * 0.1);
+        const orb2Grad = ctx.createRadialGradient(glow2X, glow2Y, 10, glow2X, glow2Y, glowRadius * 0.7);
+        orb2Grad.addColorStop(0, '#38BDF825');
+        orb2Grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = orb2Grad;
+        ctx.fillRect(0, 0, width, height);
+
+        // 3. Subtle studio perspective grid
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
         ctx.lineWidth = 1;
-        const gridSize = 40;
+        const gridSize = 48;
         for (let x = 0; x < width; x += gridSize) {
           ctx.beginPath();
           ctx.moveTo(x, 0);
@@ -118,7 +130,10 @@ export async function getReliableSampleVideoUrl(
         // 4. Floating bokeh particles
         particles.forEach((p) => {
           p.y -= p.speed;
+          p.x += p.drift;
           if (p.y < -10) p.y = height + 10;
+          if (p.x < -10) p.x = width + 10;
+          if (p.x > width + 10) p.x = -10;
 
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
@@ -127,12 +142,6 @@ export async function getReliableSampleVideoUrl(
           ctx.fill();
           ctx.globalAlpha = 1.0;
         });
-
-        // 5. Stylized phone UI speaker / stage watermark
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-        ctx.font = '700 12px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('AI STUDIO SHORT-FORM DEMO', width / 2, height * 0.16);
 
         frame++;
         requestAnimationFrame(drawLoop);
