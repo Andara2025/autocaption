@@ -655,7 +655,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               />
               <button
                 onClick={onAutoAddEmojis}
-                className="flex items-center gap-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-amber-300 px-2.5 py-1.5 rounded border border-neutral-700 transition-colors whitespace-nowrap shrink-0"
+                disabled={words.length === 0}
+                className="flex items-center gap-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-amber-300 px-2.5 py-1.5 rounded border border-neutral-700 transition-colors whitespace-nowrap shrink-0"
                 title="Auto-detect keywords and pair emojis"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -663,104 +664,119 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               </button>
             </div>
 
-            <div className="space-y-1.5 max-h-[520px] overflow-y-auto pr-1">
-              {filteredWords.map((word, idx) => {
-                const isActive = currentTime >= word.start && currentTime <= word.end;
-                const isSelected = selectedWordId === word.id;
+            {words.length === 0 ? (
+              <div className="p-6 rounded border border-dashed border-neutral-800 bg-neutral-950/50 text-center space-y-2.5">
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  No subtitle clips in sequence. Import a video to auto-transcribe or add a manual subtitle block.
+                </p>
+                <button
+                  onClick={() => handleAddWord(-1)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-xs font-semibold text-amber-300 border border-neutral-700 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add First Subtitle</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-[520px] overflow-y-auto pr-1">
+                {filteredWords.map((word, idx) => {
+                  const isActive = currentTime >= word.start && currentTime <= word.end;
+                  const isSelected = selectedWordId === word.id;
 
-                return (
-                  <div
-                    key={word.id}
-                    onClick={() => onSelectWord(word.id)}
-                    className={`p-2 rounded border transition-colors text-xs flex items-center justify-between gap-2 cursor-pointer ${
-                      isSelected
-                        ? 'border-amber-400 bg-neutral-800'
-                        : isActive
-                        ? 'border-amber-400/50 bg-neutral-800/60'
-                        : 'border-neutral-800/90 bg-neutral-950/60 hover:border-neutral-700'
-                    }`}
-                  >
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSeek(word.start);
-                      }}
-                      className="font-mono text-[11px] text-neutral-400 hover:text-amber-400 tabular-nums shrink-0 px-1 py-0.5 rounded hover:bg-neutral-900"
-                    >
-                      {word.start.toFixed(2)}s
-                    </button>
-
-                    <div className="flex-1 flex items-center gap-1.5 min-w-0">
-                      {editingWordId === word.id ? (
-                        <input
-                          type="text"
-                          defaultValue={word.text}
-                          autoFocus
-                          onBlur={(e) => {
-                            handleWordUpdate(word.id, { text: e.target.value.trim() });
-                            setEditingWordId(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              handleWordUpdate(word.id, {
-                                text: (e.target as HTMLInputElement).value.trim(),
-                              });
-                              setEditingWordId(null);
-                            }
-                          }}
-                          className="bg-neutral-900 border border-amber-400 rounded px-2 py-0.5 text-neutral-100 font-semibold text-xs w-full focus:outline-none"
-                        />
-                      ) : (
-                        <span
-                          onDoubleClick={() => setEditingWordId(word.id)}
-                          className="font-semibold text-neutral-200 truncate flex items-center gap-1"
-                          title="Double-click to edit text"
-                        >
-                          {word.text}
-                          {word.emoji && <span>{word.emoji}</span>}
-                        </span>
-                      )}
-                    </div>
-
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleWordUpdate(word.id, { highlight: !word.highlight });
-                      }}
-                      className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
-                        word.highlight
-                          ? 'bg-amber-400 text-neutral-950 font-bold'
-                          : 'bg-neutral-800 text-neutral-400 hover:text-neutral-200'
+                  return (
+                    <div
+                      key={word.id}
+                      onClick={() => onSelectWord(word.id)}
+                      className={`p-2 rounded border transition-colors text-xs flex items-center justify-between gap-2 cursor-pointer ${
+                        isSelected
+                          ? 'border-amber-400 bg-neutral-800'
+                          : isActive
+                          ? 'border-amber-400/50 bg-neutral-800/60'
+                          : 'border-neutral-800/90 bg-neutral-950/60 hover:border-neutral-700'
                       }`}
                     >
-                      {word.highlight ? 'Pop' : 'Base'}
-                    </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSeek(word.start);
+                        }}
+                        className="font-mono text-[11px] text-neutral-400 hover:text-amber-400 tabular-nums shrink-0 px-1 py-0.5 rounded hover:bg-neutral-900"
+                      >
+                        {word.start.toFixed(2)}s
+                      </button>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAddWord(idx);
-                      }}
-                      className="text-neutral-500 hover:text-neutral-200 p-1 rounded hover:bg-neutral-900"
-                      title="Insert word after"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </button>
+                      <div className="flex-1 flex items-center gap-1.5 min-w-0">
+                        {editingWordId === word.id ? (
+                          <input
+                            type="text"
+                            defaultValue={word.text}
+                            autoFocus
+                            onBlur={(e) => {
+                              handleWordUpdate(word.id, { text: e.target.value.trim() });
+                              setEditingWordId(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleWordUpdate(word.id, {
+                                  text: (e.target as HTMLInputElement).value.trim(),
+                                });
+                                setEditingWordId(null);
+                              }
+                            }}
+                            className="bg-neutral-900 border border-amber-400 rounded px-2 py-0.5 text-neutral-100 font-semibold text-xs w-full focus:outline-none"
+                          />
+                        ) : (
+                          <span
+                            onDoubleClick={() => setEditingWordId(word.id)}
+                            className="font-semibold text-neutral-200 truncate flex items-center gap-1"
+                            title="Double-click to edit text"
+                          >
+                            {word.text}
+                            {word.emoji && <span>{word.emoji}</span>}
+                          </span>
+                        )}
+                      </div>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleWordDelete(word.id);
-                      }}
-                      className="text-neutral-500 hover:text-rose-400 p-1 rounded hover:bg-neutral-900"
-                      title="Delete word"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleWordUpdate(word.id, { highlight: !word.highlight });
+                        }}
+                        className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
+                          word.highlight
+                            ? 'bg-amber-400 text-neutral-950 font-bold'
+                            : 'bg-neutral-800 text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        {word.highlight ? 'Pop' : 'Base'}
+                      </button>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAddWord(idx);
+                        }}
+                        className="text-neutral-500 hover:text-neutral-200 p-1 rounded hover:bg-neutral-900"
+                        title="Insert word after"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleWordDelete(word.id);
+                        }}
+                        className="text-neutral-500 hover:text-rose-400 p-1 rounded hover:bg-neutral-900"
+                        title="Delete word"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 

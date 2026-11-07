@@ -46,7 +46,7 @@ interface AudioTimelineTrackProps {
   isMuted: boolean;
   onToggleMute: () => void;
   aspectRatio: AspectRatioMode;
-  clipTitle: string;
+  clipTitle: string | null;
   trackState: TrackVisibilityState;
   onTrackStateChange: (next: TrackVisibilityState) => void;
 }
@@ -152,7 +152,7 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
     return Array.from({ length: count }, (_, idx) => idx);
   }, [zoomLevel]);
 
-  // Draw High-Resolution Studio Mirrored Audio Waveform on Canvas
+  // Draw High-Resolution Studio Mirrored Audio Waveform on Canvas (only for real waveformData)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -178,18 +178,17 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
     ctx.stroke();
 
     const peaks = waveformData?.peaks || [];
-    const numBars = peaks.length > 0 ? peaks.length : 220;
+    if (peaks.length === 0) return;
+
+    const numBars = peaks.length;
     const barSpacing = width / numBars;
     const barWidth = Math.max(1.5, barSpacing * 0.68);
     const progressRatio = Math.min(1, Math.max(0, currentTime / safeDuration));
     const currentBarIndex = Math.floor(progressRatio * numBars);
 
     for (let i = 0; i < numBars; i++) {
-      const rawPeak =
-        peaks[i] !== undefined
-          ? peaks[i]
-          : 0.18 + 0.35 * Math.abs(Math.sin(i * 0.23)) * Math.cos(i * 0.09);
-      const amplitude = Math.max(0.06, Math.min(0.95, rawPeak));
+      const rawPeak = peaks[i] ?? 0.05;
+      const amplitude = Math.max(0.04, Math.min(0.95, rawPeak));
       const halfHeight = amplitude * (height * 0.42);
       const x = i * barSpacing;
 
@@ -203,7 +202,6 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
         ctx.fillStyle = amplitude > 0.75 ? '#64748B' : '#334155';
       }
 
-      // Draw mirrored studio waveform bar (top + bottom symmetry)
       ctx.beginPath();
       ctx.roundRect(x, centerY - halfHeight, barWidth, halfHeight * 2, 1);
       ctx.fill();
@@ -225,11 +223,9 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
   const snapTime = useCallback(
     (val: number): number => {
       if (!snapEnabled) return Math.round(val * 100) / 100;
-      // Snap to playhead if within 0.08s
       if (Math.abs(val - currentTime) < 0.08) {
         return Math.round(currentTime * 100) / 100;
       }
-      // Snap to 0.05s grid
       return Math.round(val * 20) / 20;
     },
     [snapEnabled, currentTime]
@@ -242,7 +238,9 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
     const handleMouseMove = (e: MouseEvent) => {
       if (!trackContentRef.current) return;
       const rect = trackContentRef.current.getBoundingClientRect();
-      const deltaSeconds = ((e.clientX - ('startClientX' in dragState ? dragState.startClientX : 0)) / rect.width) * safeDuration;
+      const deltaSeconds =
+        ((e.clientX - ('startClientX' in dragState ? dragState.startClientX : 0)) / rect.width) *
+        safeDuration;
 
       if (dragState.type === 'playhead') {
         const nextTime = clientXToTime(e.clientX);
@@ -254,7 +252,10 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
 
       if (dragState.type === 'move-word') {
         const clipDur = dragState.initialEnd - dragState.initialStart;
-        const rawStart = Math.max(0, Math.min(safeDuration - clipDur, dragState.initialStart + deltaSeconds));
+        const rawStart = Math.max(
+          0,
+          Math.min(safeDuration - clipDur, dragState.initialStart + deltaSeconds)
+        );
         const newStart = snapTime(rawStart);
         const newEnd = Math.round((newStart + clipDur) * 100) / 100;
 
@@ -265,7 +266,10 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
         );
       } else if (dragState.type === 'trim-left') {
         const maxStart = dragState.initialEnd - 0.1;
-        const rawStart = Math.max(0, Math.min(maxStart, dragState.initialStart + deltaSeconds));
+        const rawStart = Math.max(
+          0,
+          Math.min(maxStart, dragState.initialStart + deltaSeconds)
+        );
         const newStart = snapTime(rawStart);
 
         onWordsChange(
@@ -275,7 +279,10 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
         );
       } else if (dragState.type === 'trim-right') {
         const minEnd = dragState.initialStart + 0.1;
-        const rawEnd = Math.max(minEnd, Math.min(safeDuration, dragState.initialEnd + deltaSeconds));
+        const rawEnd = Math.max(
+          minEnd,
+          Math.min(safeDuration, dragState.initialEnd + deltaSeconds)
+        );
         const newEnd = snapTime(rawEnd);
 
         onWordsChange(
@@ -296,13 +303,22 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [dragState, safeDuration, clientXToTime, onSeek, onWordsChange, words, snapTime, trackState.captionsLocked]);
+  }, [
+    dragState,
+    safeDuration,
+    clientXToTime,
+    onSeek,
+    onWordsChange,
+    words,
+    snapTime,
+    trackState.captionsLocked,
+  ]);
 
   // Split word clip at timestamp (or midpoint)
   const handleSplitWord = (word: WordCaption, splitTime?: number) => {
     if (trackState.captionsLocked) return;
     const dur = word.end - word.start;
-    if (dur < 0.2) return; // too short to split
+    if (dur < 0.2) return;
 
     const cutPoint =
       splitTime && splitTime > word.start + 0.08 && splitTime < word.end - 0.08
@@ -352,7 +368,7 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
     const end = Math.min(safeDuration, Math.round((start + 0.5) * 100) / 100);
     const newWord: WordCaption = {
       id: `w-new-${Date.now()}`,
-      text: 'CAPTION',
+      text: 'SUBTITLE',
       start,
       end,
       highlight: true,
@@ -429,7 +445,7 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
 
           <button
             onClick={handleSplitAtPlayhead}
-            disabled={trackState.captionsLocked}
+            disabled={trackState.captionsLocked || words.length === 0}
             className="flex items-center gap-1 px-2 py-1 rounded bg-neutral-950 hover:bg-neutral-800 text-neutral-300 border border-neutral-800 text-[11px] font-medium transition-colors disabled:opacity-40 whitespace-nowrap shrink-0"
             title="Split subtitle clip at playhead"
           >
@@ -724,7 +740,7 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-neutral-200 truncate flex items-center gap-1">
                   <Mic className="w-3 h-3 text-sky-400 shrink-0" />
-                  <span>Voiceover</span>
+                  <span>Audio Track</span>
                 </div>
                 <span className="text-[10px] text-neutral-500 font-mono block truncate">
                   {isMuted ? 'Muted (-∞ dB)' : '48kHz Stereo'}
@@ -885,7 +901,6 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
                       2
                     )}s) · Drag to move, drag edges to trim, double-click to edit`}
                   >
-                    {/* Top NLE Clip Accent Bar */}
                     <div
                       className={`absolute top-0 left-0 right-0 h-1 ${
                         isSelected || isCurrent
@@ -896,7 +911,6 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
                       }`}
                     />
 
-                    {/* Left Trim Handle */}
                     {!trackState.captionsLocked && activeTool === 'select' && (
                       <div
                         onMouseDown={(e) => {
@@ -914,7 +928,6 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
                       />
                     )}
 
-                    {/* Clip Label or Inline Editor */}
                     <div className="flex-1 px-1.5 pt-0.5 flex items-center justify-between gap-1 min-w-0 overflow-hidden">
                       {isEditingInline ? (
                         <input
@@ -941,7 +954,6 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
                       )}
                     </div>
 
-                    {/* Right Trim Handle */}
                     {!trackState.captionsLocked && activeTool === 'select' && (
                       <div
                         onMouseDown={(e) => {
@@ -973,32 +985,35 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
                 !trackState.videoVisible ? 'opacity-40' : ''
               }`}
             >
-              <div className="w-full h-full rounded-sm bg-indigo-950/40 border border-indigo-500/40 overflow-hidden flex flex-col relative">
-                {/* Video Clip Header Strip */}
-                <div className="h-4 px-2 bg-indigo-500/30 border-b border-indigo-500/30 flex items-center justify-between text-[10px] font-mono text-indigo-200 shrink-0">
-                  <span className="truncate font-semibold">
-                    V1 · {clipTitle} ({aspectRatio})
-                  </span>
-                  <span className="text-indigo-300/80 tabular-nums">
-                    00:00:00 – {formatSMPTE(safeDuration)}
-                  </span>
-                </div>
+              {clipTitle ? (
+                <div className="w-full h-full rounded-sm bg-indigo-950/40 border border-indigo-500/40 overflow-hidden flex flex-col relative">
+                  <div className="h-4 px-2 bg-indigo-500/30 border-b border-indigo-500/30 flex items-center justify-between text-[10px] font-mono text-indigo-200 shrink-0">
+                    <span className="truncate font-semibold">
+                      V1 · {clipTitle} ({aspectRatio})
+                    </span>
+                    <span className="text-indigo-300/80 tabular-nums">
+                      00:00:00 – {formatSMPTE(safeDuration)}
+                    </span>
+                  </div>
 
-                {/* Simulated Filmstrip Cells */}
-                <div className="flex-1 flex items-stretch divide-x divide-indigo-500/20 overflow-hidden">
-                  {filmstripCells.map((cell) => (
-                    <div
-                      key={cell}
-                      className="flex-1 bg-gradient-to-b from-slate-900 via-indigo-950/30 to-neutral-950 flex items-end justify-start p-1 relative overflow-hidden"
-                    >
-                      <div className="w-3 h-3 rounded-full bg-indigo-400/10 blur-sm absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
-                      <span className="text-[8px] font-mono text-indigo-400/50 tabular-nums">
-                        {((cell / filmstripCells.length) * safeDuration).toFixed(1)}s
-                      </span>
-                    </div>
-                  ))}
+                  <div className="flex-1 flex items-stretch divide-x divide-indigo-500/20 overflow-hidden">
+                    {filmstripCells.map((cell) => (
+                      <div
+                        key={cell}
+                        className="flex-1 bg-neutral-900/80 flex items-end justify-start p-1 relative overflow-hidden"
+                      >
+                        <span className="text-[8px] font-mono text-indigo-400/50 tabular-nums">
+                          {((cell / filmstripCells.length) * safeDuration).toFixed(1)}s
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="w-full h-full rounded-sm border border-dashed border-neutral-800/80 flex items-center px-3 text-[11px] font-mono text-neutral-600">
+                  V1 · Empty Video Track
+                </div>
+              )}
             </div>
 
             {/* 4. TRACK A1: STUDIO WAVEFORM LAYER */}
@@ -1009,25 +1024,29 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
               }}
               className="h-16 relative p-1.5 cursor-pointer"
             >
-              <div className="w-full h-full rounded-sm bg-sky-950/25 border border-sky-500/35 overflow-hidden flex flex-col relative">
-                {/* Audio Clip Header Strip */}
-                <div className="h-4 px-2 bg-sky-500/20 border-b border-sky-500/25 flex items-center justify-between text-[10px] font-mono text-sky-200 shrink-0 z-10">
-                  <span className="truncate font-semibold">
-                    A1 · Voiceover_Master.wav {isMuted ? '(MUTED)' : ''}
-                  </span>
-                  <span className="text-sky-300/80 tabular-nums">0.0 dB</span>
-                </div>
+              {clipTitle && waveformData ? (
+                <div className="w-full h-full rounded-sm bg-sky-950/25 border border-sky-500/35 overflow-hidden flex flex-col relative">
+                  <div className="h-4 px-2 bg-sky-500/20 border-b border-sky-500/25 flex items-center justify-between text-[10px] font-mono text-sky-200 shrink-0 z-10">
+                    <span className="truncate font-semibold">
+                      A1 · {clipTitle} {isMuted ? '(MUTED)' : ''}
+                    </span>
+                    <span className="text-sky-300/80 tabular-nums">0.0 dB</span>
+                  </div>
 
-                {/* Mirrored Waveform Canvas */}
-                <div className="flex-1 relative">
-                  <canvas
-                    ref={canvasRef}
-                    width={1800}
-                    height={46}
-                    className="w-full h-full block pointer-events-none"
-                  />
+                  <div className="flex-1 relative">
+                    <canvas
+                      ref={canvasRef}
+                      width={1800}
+                      height={46}
+                      className="w-full h-full block pointer-events-none"
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="w-full h-full rounded-sm border border-dashed border-neutral-800/80 flex items-center px-3 text-[11px] font-mono text-neutral-600">
+                  A1 · Empty Audio Track
+                </div>
+              )}
             </div>
 
             {/* 5. MASTER NLE PLAYHEAD CURSOR */}
@@ -1038,11 +1057,9 @@ export const AudioTimelineTrack: React.FC<AudioTimelineTrackProps> = ({
                 transform: 'translateX(-50%)',
               }}
             >
-              {/* Playhead Cap */}
-              <div className="w-3 h-3.5 bg-amber-400 clip-path-polygon shadow-sm flex items-center justify-center rounded-t-xs">
+              <div className="w-3 h-3.5 bg-amber-400 shadow-sm flex items-center justify-center rounded-t-xs">
                 <div className="w-0.5 h-2 bg-neutral-950/60" />
               </div>
-              {/* Playhead Vertical Line */}
               <div className="w-[1.5px] flex-1 bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.75)]" />
             </div>
           </div>

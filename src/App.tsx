@@ -3,7 +3,7 @@ import { Player, PlayerRef } from '@remotion/player';
 import { MainComposition } from './components/MainComposition';
 import { ControlPanel } from './components/ControlPanel';
 import { AudioTimelineTrack } from './components/AudioTimelineTrack';
-import { PRESET_CONFIGS, SAMPLE_VIDEOS } from './services/presets';
+import { PRESET_CONFIGS } from './services/presets';
 import {
   AspectRatioMode,
   CaptionStyle,
@@ -14,12 +14,9 @@ import {
 } from './types/caption';
 import { extractWaveformFromMedia, WaveformData } from './services/audioWaveform';
 import { autoTranscribeMedia } from './services/transcriptionRouter';
-import { createVoiceoverAudioForSample } from './services/sampleVoiceover';
-import { getReliableSampleVideoUrl } from './services/sampleVideoGenerator';
 import { exportVideoClientSide } from './services/videoExporter';
 import { formatAndEnhanceWords } from './services/groq';
 import {
-  Play,
   Upload,
   Download,
   Shield,
@@ -33,23 +30,33 @@ import {
   RefreshCw,
   Grid,
   FolderOpen,
-  Maximize2,
+  Trash2,
 } from 'lucide-react';
 
-export default function App() {
-  // Sequence & Media State
-  const [currentSampleIndex, setCurrentSampleIndex] = useState<number>(0);
-  const currentSample = SAMPLE_VIDEOS[currentSampleIndex];
+interface ImportedMediaItem {
+  id: string;
+  file: File;
+  url: string;
+  duration: number;
+  aspectRatio: AspectRatioMode;
+  words: WordCaption[];
+  waveformData: WaveformData | null;
+}
 
+export default function App() {
+  // Sequence & Canvas State (No Demo Captions or Demo Videos)
   const [aspectRatio, setAspectRatio] = useState<AspectRatioMode>('9:16');
   const [videoFit, setVideoFit] = useState<VideoFitMode>('cover');
   const [canvasZoom, setCanvasZoom] = useState<'fit' | '75' | '100'>('fit');
   const [showMediaBin, setShowMediaBin] = useState<boolean>(true);
 
-  const [videoUrl, setVideoUrl] = useState<string>(currentSample.videoUrl);
+  const [mediaBin, setMediaBin] = useState<ImportedMediaItem[]>([]);
+  const [activeMediaId, setActiveMediaId] = useState<string | null>(null);
+
+  const [videoUrl, setVideoUrl] = useState<string>('');
   const [audioUrl, setAudioUrl] = useState<string | undefined>(undefined);
-  const [videoDuration, setVideoDuration] = useState<number>(currentSample.duration);
-  const [words, setWords] = useState<WordCaption[]>(currentSample.words);
+  const [videoDuration, setVideoDuration] = useState<number>(15);
+  const [words, setWords] = useState<WordCaption[]>([]);
   const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
 
   const [currentTime, setCurrentTime] = useState<number>(0);
@@ -79,9 +86,6 @@ export default function App() {
     return localStorage.getItem('groq_whisper_api_key') || '';
   });
 
-  // Uploaded file state
-  const [currentUploadedFile, setCurrentUploadedFile] = useState<File | null>(null);
-
   // Transcription state
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
@@ -99,49 +103,20 @@ export default function App() {
   const playerRef = useRef<PlayerRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Initialize Sample Waveform & Synced Voiceover when sample or aspect ratio changes (for built-in samples)
-  useEffect(() => {
-    if (currentUploadedFile) return;
-    let isCancelled = false;
+  const activeMedia = mediaBin.find((m) => m.id === activeMediaId) || null;
 
-    const setupSample = async () => {
-      try {
-        const themeColor =
-          currentSampleIndex === 0 ? '#10B981' : currentSampleIndex === 1 ? '#F59E0B' : '#6366F1';
-        const reliableVideo = await getReliableSampleVideoUrl(
-          currentSample.id,
-          currentSample.duration,
-          themeColor,
-          aspectRatio
+  // Keep active media item words synced when user edits words on timeline/inspector
+  const handleWordsChange = useCallback(
+    (nextWords: WordCaption[]) => {
+      setWords(nextWords);
+      if (activeMediaId) {
+        setMediaBin((prev) =>
+          prev.map((item) => (item.id === activeMediaId ? { ...item, words: nextWords } : item))
         );
-
-        if (!isCancelled && reliableVideo) {
-          setVideoUrl(reliableVideo);
-        }
-
-        const sampleVoiceUri = await createVoiceoverAudioForSample(
-          currentSample.words,
-          currentSample.duration
-        );
-
-        if (isCancelled) return;
-        setAudioUrl(sampleVoiceUri);
-
-        const waveform = await extractWaveformFromMedia(sampleVoiceUri, 240);
-        if (!isCancelled) {
-          setWaveformData(waveform);
-        }
-      } catch (err) {
-        console.warn('Sample setup error:', err);
       }
-    };
-
-    setupSample();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [currentSampleIndex, aspectRatio, currentUploadedFile, currentSample]);
+    },
+    [activeMediaId]
+  );
 
   // Persist Groq key
   const handleApiKeyChange = (key: string) => {
@@ -221,7 +196,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [togglePlay, handleSeek, currentTime]);
 
-  // Switch aspect ratio and adjust default Y position if appropriate
+  // Switch aspect ratio
   const handleAspectRatioChange = (nextRatio: AspectRatioMode) => {
     setAspectRatio(nextRatio);
     setStyle((prev) => ({
@@ -230,26 +205,46 @@ export default function App() {
     }));
   };
 
-  // Switch to built-in sample sequence
-  const handleSelectSample = async (index: number) => {
-    const sample = SAMPLE_VIDEOS[index];
-    if (!sample) return;
-
-    setCurrentUploadedFile(null);
-    setCurrentSampleIndex(index);
-    setVideoDuration(sample.duration);
-    setWords(sample.words);
+  // Switch active clip from Media Bin
+  const handleSelectMediaItem = (item: ImportedMediaItem) => {
+    setActiveMediaId(item.id);
+    setVideoUrl(item.url);
+    setAudioUrl(undefined);
+    setVideoDuration(item.duration);
+    setWords(item.words);
+    setWaveformData(item.waveformData);
+    setAspectRatio(item.aspectRatio);
     setSelectedWordId(null);
-    setTranscriptionError(null);
-    setTranscriptionStatus(`Loaded sequence "${sample.title}" with synchronized voiceover.`);
     handleSeek(0);
+  };
+
+  // Remove item from Media Bin
+  const handleDeleteMediaItem = (id: string) => {
+    const remaining = mediaBin.filter((m) => m.id !== id);
+    setMediaBin(remaining);
+    if (activeMediaId === id) {
+      if (remaining.length > 0) {
+        handleSelectMediaItem(remaining[0]);
+      } else {
+        setActiveMediaId(null);
+        setVideoUrl('');
+        setAudioUrl(undefined);
+        setVideoDuration(15);
+        setWords([]);
+        setWaveformData(null);
+        setSelectedWordId(null);
+        handleSeek(0);
+      }
+    }
   };
 
   // Auto add contextual emojis
   const handleAutoAddEmojis = () => {
-    setWords((prev) =>
-      formatAndEnhanceWords(prev.map((w) => ({ word: w.text, start: w.start, end: w.end })))
+    if (words.length === 0) return;
+    const enhanced = formatAndEnhanceWords(
+      words.map((w) => ({ word: w.text, start: w.start, end: w.end }))
     );
+    handleWordsChange(enhanced);
   };
 
   // Handle File Upload & Automated Audio Transcription
@@ -257,34 +252,55 @@ export default function App() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setTranscriptionError(null);
-    setCurrentUploadedFile(file);
+    const itemId = `media-${Date.now()}`;
     const localVideoUrl = URL.createObjectURL(file);
+
+    setTranscriptionError(null);
+    setActiveMediaId(itemId);
     setVideoUrl(localVideoUrl);
     setAudioUrl(undefined);
+    setWords([]);
     setSelectedWordId(null);
+    handleSeek(0);
+
+    let detectedDuration = 15;
+    let detectedAspect: AspectRatioMode = aspectRatio;
 
     // Measure video dimensions & duration to auto-detect 16:9 vs 9:16
-    const tempVideo = document.createElement('video');
-    tempVideo.src = localVideoUrl;
-    tempVideo.onloadedmetadata = () => {
-      const dur = tempVideo.duration || 15;
-      setVideoDuration(dur);
-      if (tempVideo.videoWidth && tempVideo.videoHeight) {
-        if (tempVideo.videoWidth > tempVideo.videoHeight) {
-          handleAspectRatioChange('16:9');
-        } else {
-          handleAspectRatioChange('9:16');
+    await new Promise<void>((resolve) => {
+      const tempVideo = document.createElement('video');
+      tempVideo.src = localVideoUrl;
+      tempVideo.onloadedmetadata = () => {
+        detectedDuration = tempVideo.duration || 15;
+        setVideoDuration(detectedDuration);
+        if (tempVideo.videoWidth && tempVideo.videoHeight) {
+          detectedAspect = tempVideo.videoWidth > tempVideo.videoHeight ? '16:9' : '9:16';
+          handleAspectRatioChange(detectedAspect);
         }
-      }
-    };
+        resolve();
+      };
+      tempVideo.onerror = () => resolve();
+    });
 
+    let extractedWave: WaveformData | null = null;
     try {
-      const waveform = await extractWaveformFromMedia(file, 240);
-      setWaveformData(waveform);
+      extractedWave = await extractWaveformFromMedia(file, 240);
+      setWaveformData(extractedWave);
     } catch (waveErr) {
       console.warn('Failed to extract waveform:', waveErr);
     }
+
+    const newMediaItem: ImportedMediaItem = {
+      id: itemId,
+      file,
+      url: localVideoUrl,
+      duration: detectedDuration,
+      aspectRatio: detectedAspect,
+      words: [],
+      waveformData: extractedWave,
+    };
+
+    setMediaBin((prev) => [newMediaItem, ...prev]);
 
     setIsTranscribing(true);
     try {
@@ -294,6 +310,9 @@ export default function App() {
 
       if (result.words && result.words.length > 0) {
         setWords(result.words);
+        setMediaBin((prev) =>
+          prev.map((m) => (m.id === itemId ? { ...m, words: result.words } : m))
+        );
         const sourceName =
           result.source === 'groq'
             ? 'Groq Whisper Large v3'
@@ -311,20 +330,21 @@ export default function App() {
       setTranscriptionError(msg);
     } finally {
       setIsTranscribing(false);
+      if (event.target) event.target.value = '';
     }
   };
 
-  // Retranscribe uploaded file
+  // Retranscribe active uploaded file
   const handleRetranscribe = async () => {
-    if (!currentUploadedFile) return;
+    if (!activeMedia) return;
     setIsTranscribing(true);
     setTranscriptionError(null);
     try {
-      const result = await autoTranscribeMedia(currentUploadedFile, groqApiKey, (s) => {
+      const result = await autoTranscribeMedia(activeMedia.file, groqApiKey, (s) => {
         setTranscriptionStatus(s);
       });
       if (result.words && result.words.length > 0) {
-        setWords(result.words);
+        handleWordsChange(result.words);
         setTranscriptionStatus(`Updated ${result.words.length} subtitle clips.`);
       }
     } catch (err: unknown) {
@@ -336,6 +356,7 @@ export default function App() {
 
   // Client-Side Video Export
   const handleExport = async () => {
+    if (!videoUrl) return;
     try {
       setRenderProgress({
         isRendering: true,
@@ -389,7 +410,7 @@ export default function App() {
   const durationInFrames = Math.max(30, Math.round(videoDuration * 30));
   const compWidth = aspectRatio === '16:9' ? 1920 : 1080;
   const compHeight = aspectRatio === '16:9' ? 1080 : 1920;
-  const activeClipTitle = currentUploadedFile ? currentUploadedFile.name : currentSample.title;
+  const activeClipTitle = activeMedia ? activeMedia.file.name : null;
 
   return (
     <div className="flex flex-col h-screen w-screen bg-neutral-950 text-neutral-100 overflow-hidden font-sans">
@@ -446,8 +467,9 @@ export default function App() {
           />
           <button
             onClick={handleExport}
-            disabled={renderProgress.isRendering}
-            className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold text-neutral-950 bg-amber-400 hover:bg-amber-300 rounded transition-colors whitespace-nowrap shrink-0 disabled:opacity-50 cursor-pointer"
+            disabled={renderProgress.isRendering || !videoUrl}
+            className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold text-neutral-950 bg-amber-400 hover:bg-amber-300 rounded transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+            title={!videoUrl ? 'Import a video to export MP4' : 'Export sequence to MP4'}
           >
             {renderProgress.isRendering ? (
               <>
@@ -466,7 +488,7 @@ export default function App() {
 
       {/* 2. UPPER NLE WORKSPACE (PROJECT MEDIA BIN + PROGRAM MONITOR CANVAS + INSPECTOR) */}
       <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* LEFT PANEL: Project Media Bin */}
+        {/* LEFT PANEL: Project Media Bin (No Demo Clips) */}
         {showMediaBin && (
           <aside className="hidden lg:flex w-64 xl:w-72 flex-col bg-neutral-900 border-r border-neutral-800 shrink-0 select-none">
             <div className="h-9 px-3.5 border-b border-neutral-800 bg-neutral-950 flex items-center justify-between text-xs font-semibold text-neutral-300">
@@ -475,7 +497,7 @@ export default function App() {
                 <span>Project Media</span>
               </div>
               <span className="font-mono text-[11px] text-neutral-500 tabular-nums">
-                {SAMPLE_VIDEOS.length + (currentUploadedFile ? 1 : 0)} items
+                {mediaBin.length} {mediaBin.length === 1 ? 'clip' : 'clips'}
               </span>
             </div>
 
@@ -488,7 +510,7 @@ export default function App() {
                 <span>Import Video / Audio</span>
               </button>
 
-              {currentUploadedFile && (
+              {activeMedia && (
                 <button
                   onClick={handleRetranscribe}
                   disabled={isTranscribing}
@@ -500,70 +522,71 @@ export default function App() {
               )}
             </div>
 
-            {/* Active Clip / Sample Sequences List */}
+            {/* Imported Media List */}
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
-              <div className="text-[11px] font-medium text-neutral-500 pb-1">
-                Sequences & Footage
-              </div>
-
-              {currentUploadedFile && (
-                <div className="p-2.5 rounded border border-amber-400 bg-neutral-800/90 text-xs space-y-1">
-                  <div className="flex items-center gap-1.5 font-semibold text-neutral-100 truncate">
-                    <Film className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span className="truncate">{currentUploadedFile.name}</span>
-                  </div>
-                  <div className="text-[11px] text-neutral-400 font-mono tabular-nums flex items-center gap-1.5">
-                    <span>{videoDuration.toFixed(1)}s</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{words.length} words</span>
-                    <span aria-hidden="true">·</span>
-                    <span>Custom</span>
-                  </div>
+              {mediaBin.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-4 text-neutral-500 space-y-2">
+                  <Film className="w-6 h-6 text-neutral-700 stroke-[1.5]" />
+                  <p className="text-xs text-neutral-400 font-medium">Media Bin Empty</p>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed">
+                    Import a video or audio file to populate timeline tracks and generate word-level subtitles.
+                  </p>
                 </div>
+              ) : (
+                mediaBin.map((item) => {
+                  const isSelected = item.id === activeMediaId;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => handleSelectMediaItem(item)}
+                      className={`p-2.5 rounded border transition-colors text-xs space-y-1 cursor-pointer flex items-center justify-between gap-2 ${
+                        isSelected
+                          ? 'border-amber-400 bg-neutral-800/90 text-neutral-100'
+                          : 'border-neutral-800 bg-neutral-950/60 text-neutral-300 hover:border-neutral-700'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-1.5 font-semibold truncate">
+                          <Film className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span className="truncate">{item.file.name}</span>
+                        </div>
+                        <div className="text-[11px] text-neutral-400 font-mono tabular-nums flex items-center gap-1.5">
+                          <span>{item.duration.toFixed(1)}s</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{item.words.length} words</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{item.aspectRatio}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteMediaItem(item.id);
+                        }}
+                        className="p-1 text-neutral-500 hover:text-rose-400 rounded hover:bg-neutral-900 shrink-0"
+                        title="Remove from project"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })
               )}
-
-              {SAMPLE_VIDEOS.map((sample, idx) => {
-                const isSelected = currentSampleIndex === idx && !currentUploadedFile;
-                return (
-                  <button
-                    key={sample.id}
-                    onClick={() => handleSelectSample(idx)}
-                    className={`w-full text-left p-2.5 rounded border transition-colors text-xs space-y-1 ${
-                      isSelected
-                        ? 'border-amber-400 bg-neutral-800/90 text-neutral-100'
-                        : 'border-neutral-800 bg-neutral-950/60 text-neutral-300 hover:border-neutral-700'
-                    }`}
-                  >
-                    <div className="font-semibold truncate flex items-center gap-1.5">
-                      <Film className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                      <span className="truncate">{sample.title}</span>
-                    </div>
-                    <div className="text-[11px] text-neutral-400 font-mono tabular-nums flex items-center gap-1.5">
-                      <span>{sample.duration}s</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{sample.words.length} words</span>
-                      <span aria-hidden="true">·</span>
-                      <span>30fps</span>
-                    </div>
-                  </button>
-                );
-              })}
             </div>
           </aside>
         )}
 
-        {/* CENTER PANEL: NLE Program Monitor (Clean 9:16 & 16:9 Video Canvas WITHOUT Phone Mockup) */}
+        {/* CENTER PANEL: NLE Program Monitor (Plain Solid Viewport Surround, No Dots, No Phone Mockup) */}
         <main className="flex-1 flex flex-col bg-neutral-950 min-w-0 min-h-0 relative">
           {/* Program Monitor Toolbar */}
           <div className="h-9 px-4 bg-neutral-900/90 border-b border-neutral-800 flex items-center justify-between gap-4 text-xs shrink-0 select-none">
-            {/* Left: Monitor Title & Sequence Metadata */}
             <div className="flex items-center gap-2 min-w-0 text-neutral-300">
               <span className="font-semibold text-neutral-100 whitespace-nowrap">
                 Program Monitor
               </span>
               <span className="text-neutral-600" aria-hidden="true">·</span>
               <span className="truncate text-neutral-400 max-w-[180px] sm:max-w-[260px]">
-                {activeClipTitle}
+                {activeClipTitle || 'Untitled Sequence'}
               </span>
             </div>
 
@@ -619,7 +642,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Canvas Zoom Selector */}
               <select
                 value={canvasZoom}
                 onChange={(e) => setCanvasZoom(e.target.value as 'fit' | '75' | '100')}
@@ -710,10 +732,10 @@ export default function App() {
             </div>
           )}
 
-          {/* Direct Studio Canvas Viewport (NO Phone Mockup — Pure 9:16 or 16:9 NLE Canvas) */}
-          <div className="flex-1 flex items-center justify-center p-4 sm:p-6 min-h-0 overflow-hidden relative bg-[#090A0F] bg-[radial-gradient(#1F2430_1px,transparent_1px)] [background-size:20px_20px]">
+          {/* Plain Solid Studio Canvas Viewport (NO Dots, NO Phone Mockup — Pure 9:16 or 16:9 NLE Canvas) */}
+          <div className="flex-1 flex items-center justify-center p-4 sm:p-6 min-h-0 overflow-hidden relative bg-neutral-950">
             <div
-              className={`relative bg-black shadow-[0_16px_48px_rgba(0,0,0,0.85)] border border-neutral-800 overflow-hidden flex items-center justify-center select-none transition-all duration-150 ${
+              className={`relative bg-black shadow-2xl border border-neutral-800 overflow-hidden flex items-center justify-center select-none transition-all duration-150 ${
                 aspectRatio === '9:16'
                   ? 'aspect-[9/16] h-full max-h-full w-auto'
                   : 'aspect-[16/9] w-full max-w-[820px] max-h-full h-auto'
@@ -758,24 +780,6 @@ export default function App() {
                   console.warn('Remotion Player event handled gracefully:', err);
                 }}
               />
-
-              {/* Subtle Click-to-Play/Pause Canvas Affordance */}
-              <button
-                onClick={togglePlay}
-                className="absolute inset-0 z-20 flex items-center justify-center group focus:outline-none"
-                aria-label={isPlaying ? 'Pause Canvas' : 'Play Canvas'}
-              >
-                {!isPlaying && (
-                  <div className="w-14 h-14 rounded-full bg-neutral-950/80 border border-neutral-700 text-amber-400 flex items-center justify-center shadow-2xl opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all">
-                    <Play className="w-6 h-6 fill-amber-400 translate-x-0.5" />
-                  </div>
-                )}
-              </button>
-
-              {/* Corner Resolution & Aspect Readout Overlay */}
-              <div className="absolute bottom-2 right-2 z-30 pointer-events-none px-2 py-0.5 bg-neutral-950/80 border border-neutral-800/80 text-[10px] font-mono text-neutral-400 tabular-nums">
-                {compWidth}×{compHeight} · {aspectRatio} · 30p
-              </div>
             </div>
           </div>
         </main>
@@ -785,7 +789,7 @@ export default function App() {
           style={style}
           onStyleChange={setStyle}
           words={words}
-          onWordsChange={setWords}
+          onWordsChange={handleWordsChange}
           selectedWordId={selectedWordId}
           onSelectWord={setSelectedWordId}
           currentTime={currentTime}
@@ -808,7 +812,7 @@ export default function App() {
         isPlaying={isPlaying}
         onTogglePlay={togglePlay}
         words={words}
-        onWordsChange={setWords}
+        onWordsChange={handleWordsChange}
         selectedWordId={selectedWordId}
         onSelectWord={setSelectedWordId}
         waveformData={waveformData}

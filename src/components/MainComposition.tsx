@@ -50,44 +50,23 @@ export const MainComposition: React.FC<MainCompositionProps> = ({
   }, [videoUrl]);
 
   return (
-    <AbsoluteFill className="bg-neutral-950 flex items-center justify-center overflow-hidden">
+    <AbsoluteFill className="bg-black flex items-center justify-center overflow-hidden">
       {/* V1 Video Layer */}
-      {videoVisible ? (
-        videoUrl && !hasVideoError ? (
-          <Video
-            src={videoUrl}
-            className={`w-full h-full ${videoFit === 'contain' ? 'object-contain' : 'object-cover'}`}
-            playsInline
-            muted={isMuted || Boolean(audioUrl)}
-            volume={isMuted ? 0 : 1}
-            onError={(err) => {
-              console.warn('Remotion Video playback handled gracefully:', err);
-              setHasVideoError(true);
-            }}
-          />
-        ) : (
-          <div className="w-full h-full bg-gradient-to-br from-neutral-950 via-slate-900 to-neutral-950 flex flex-col items-center justify-center p-8 text-center text-neutral-400 relative overflow-hidden">
-            <div className="absolute w-96 h-96 rounded-full bg-sky-500/10 blur-3xl pointer-events-none" />
-            <div className="absolute w-64 h-64 rounded-full bg-amber-500/10 blur-2xl pointer-events-none translate-y-12" />
-            <div className="relative z-10 space-y-2">
-              <p className="text-xl font-bold tracking-tight text-neutral-200">
-                Program Monitor ({aspectRatio})
-              </p>
-              <p className="text-sm font-mono text-neutral-500">
-                V1 Video Track · Audio & Subtitle Sync Active
-              </p>
-            </div>
-          </div>
-        )
-      ) : (
-        <div className="w-full h-full bg-neutral-950 flex items-center justify-center">
-          <span className="text-lg font-mono text-neutral-700 uppercase tracking-widest">
-            V1 Track Hidden
-          </span>
-        </div>
+      {videoVisible && videoUrl && !hasVideoError && (
+        <Video
+          src={videoUrl}
+          className={`w-full h-full ${videoFit === 'contain' ? 'object-contain' : 'object-cover'}`}
+          playsInline
+          muted={isMuted || Boolean(audioUrl)}
+          volume={isMuted ? 0 : 1}
+          onError={(err) => {
+            console.warn('Remotion Video playback handled gracefully:', err);
+            setHasVideoError(true);
+          }}
+        />
       )}
 
-      {/* A1 Voiceover Audio Track */}
+      {/* A1 Audio Track */}
       {audioUrl && !isMuted && (
         <Audio
           src={audioUrl}
