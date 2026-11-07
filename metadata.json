@@ -1,0 +1,6 @@
+{
+  "name": "AI Auto-Caption Studio",
+  "description": "Browser-based short-form video auto-caption studio with Remotion dynamic animated subtitles and Groq Whisper word-level timestamps.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

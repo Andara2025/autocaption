@@ -1,0 +1,40 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer utilities {
+  .text-stroke-sm {
+    -webkit-text-stroke: 2px black;
+    paint-order: stroke fill;
+  }
+  .text-stroke-md {
+    -webkit-text-stroke: 3.5px black;
+    paint-order: stroke fill;
+  }
+  .text-stroke-lg {
+    -webkit-text-stroke: 5px black;
+    paint-order: stroke fill;
+  }
+  .text-stroke-xl {
+    -webkit-text-stroke: 7px black;
+    paint-order: stroke fill;
+  }
+  .text-stroke-none {
+    -webkit-text-stroke: 0px transparent;
+  }
+}
+
+/* Custom scrollbars for timeline and editor */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(24, 24, 27, 0.6);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(63, 63, 70, 0.8);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(113, 113, 122, 0.9);
+}
